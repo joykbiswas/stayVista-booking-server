@@ -52,7 +52,7 @@ async function run() {
     // auth related api
     app.post('/jwt', async (req, res) => {
       const user = req.body
-      console.log('I need a new jwt', user)
+      // console.log('I need a new jwt', user)
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: '365d',
       })
@@ -114,6 +114,12 @@ async function run() {
       res.send(result);
     })
 
+    // save a room in  database
+    app.post('/rooms', verifyToken, async(req, res) =>{
+      const room = req.body
+      const result = await roomsCollection.insertOne(room)
+      res.send(result)
+    })
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
