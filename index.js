@@ -100,6 +100,13 @@ async function run() {
       res.send(result)
     })
 
+    // get user role
+    app.get('/user/:email', async (req, res) =>{
+      const email = req.params.email
+      const result = await usersCollection.findOne({email})
+      res.send(result);
+    })
+
     // get all rooms data
     app.get('/rooms', async(req, res) =>{
       const result = await roomsCollection.find().toArray()
@@ -112,6 +119,13 @@ async function run() {
       const query = {_id: new ObjectId(id)}
       const result = await roomsCollection.findOne(query)
       res.send(result);
+    })
+
+    //get rooms for host
+    app.get('/rooms/:email', async (req, res) =>{
+      const email = req.params.email
+      const result = await roomsCollection.find({"host.email": email}).toArray()
+      res.send(result)
     })
 
     // save a room in  database
