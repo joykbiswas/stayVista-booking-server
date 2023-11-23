@@ -7,6 +7,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 const jwt = require('jsonwebtoken')
 const morgan = require('morgan')
 const stripe =require('stripe') (process.env.PAYMENT_SECRET_KEY)
+const nodemailer = require('nodemailer')
 const port = process.env.PORT || 5000
 
 // middleware
@@ -37,6 +38,31 @@ const verifyToken = async (req, res, next) => {
     next()
   })
 }
+
+// send email
+const sendEmail = () =>{
+  // crete a transport
+  const transport = nodemailer.createTransport({
+    service: 'gmail',
+    host: 'smtp.gmail.com',
+    port:587,
+    secure: false,
+    auth: {
+      user:process.env.USER,
+      pass: process.env.PASS,
+    }
+  })
+  // Verify connection
+  transport.verify((error, success) =>{
+    if(error){
+      console.log(error);
+    }else{
+      console.log('server is ready to take our email', success);
+    }
+  })
+}
+
+
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.cqpfzla.mongodb.net/?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
@@ -251,6 +277,33 @@ async function run() {
       }
       const result = await usersCollection.updateOne(query, updateDoc, options)
       res.send(result);
+    })
+
+    // Admin Stat Data
+    app.get('/admin-stat', verifyToken, verifyAdmin, async (req, res) => {
+      const bookingsDetails = await bookingsCollection
+        .find({}, { projection: { date: 1, price: 1 } })
+        .toArray()
+      const userCount = await usersCollection.countDocuments()
+      const roomCount = await roomsCollection.countDocuments()
+      const totalSale = bookingsDetails.reduce(
+        (sum, data) => sum + data.price,
+        0
+      )
+
+      const chartData = bookingsDetails.map(data => {
+        const day = new Date(data.date).getDate()
+        const month = new Date(data.date).getMonth() + 1
+        return [day + '/' + month, data.price]
+      })
+      chartData.unshift(['Day', 'Sale'])
+      res.send({
+        totalSale,
+        bookingCount: bookingsDetails.length,
+        userCount,
+        roomCount,
+        chartData,
+      })
     })
 
 
