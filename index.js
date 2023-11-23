@@ -6,6 +6,7 @@ const cookieParser = require('cookie-parser')
 const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb')
 const jwt = require('jsonwebtoken')
 const morgan = require('morgan')
+const stripe =require('stripe') (process.env.PAYMENT_SECRET_KEY)
 const port = process.env.PORT || 5000
 
 // middleware
@@ -49,10 +50,37 @@ async function run() {
   try {
     const usersCollection = client.db('stayVistaDB').collection('users')
     const roomsCollection = client.db('stayVistaDB').collection('rooms')
+    const bookingsCollection = client.db('stayVistaDB').collection('bookings')
+
+    // Role verification middleware
+    //For admins
+    const verifyAdmin = async (req, res, next)  =>{
+      const user = req.user
+      console.log("user from verify admin", user);
+      const query = {email: user?.email}
+      const result = await usersCollection.findOne(query)
+      if(!result || result?.role !== 'admin'){
+        return res.status(401).send({ message: 'unauthorized access'})
+      }
+      next()
+    };
+
+    //For hosts
+    const verifyHost = async (req, res, next)  =>{
+      const user = req.user
+      const query = {email: user?.email}
+      const result = await usersCollection.findOne(query)
+      if(!result || result?.role !== 'host'){
+        return res.status(401).send({ message: 'unauthorized access'})     
+      }
+      next()
+    };
+
+
     // auth related api
     app.post('/jwt', async (req, res) => {
       const user = req.body
-      // console.log('I need a new jwt', user)
+      console.log('I need a new jwt', user)
       const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
         expiresIn: '365d',
       })
@@ -89,7 +117,18 @@ async function run() {
       const options = { upsert: true }
       const isExist = await usersCollection.findOne(query)
       console.log('User found?----->', isExist)
-      if (isExist) return res.send(isExist)
+      if (isExist){
+        if(user?.status === 'Requested') {
+          const result = await usersCollection.updateOne(query,{
+            $set: user,
+          },
+          options,
+          )
+          return res.send(result)
+        } else{ 
+          return res.send(isExist)
+        }
+      }
       const result = await usersCollection.updateOne(
         query,
         {
@@ -122,7 +161,7 @@ async function run() {
     })
 
     //get rooms for host
-    app.get('/rooms/:email', async (req, res) =>{
+    app.get('/rooms/:email',verifyToken, verifyHost, async (req, res) =>{
       const email = req.params.email
       const result = await roomsCollection.find({"host.email": email}).toArray()
       res.send(result)
@@ -134,6 +173,87 @@ async function run() {
       const result = await roomsCollection.insertOne(room)
       res.send(result)
     })
+
+
+    // Generate client secret for stripe payment
+    app.post('/create-payment-intent', verifyToken,async (req, res) =>{
+      const {price} = req.body
+      const amount = parseInt(price * 100)
+      if(!price || amount < 1) return
+      const {client_secret} = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'usd',
+        payment_method_types: ['card']
+      })
+      res.send({clientSecret: client_secret})
+    })
+
+    // save booking info in booking connection
+    app.post('/bookings', async (req, res) =>{
+      const booking = req.body
+      const result = await bookingsCollection.insertOne(booking)
+      res.send(result);
+    })
+
+    // update room booking status
+    app.patch('/rooms/status/:id', async (req, res) =>{
+      const id = req.params.id
+      const status = req.body.status
+      const query = {_id: new ObjectId(id)}
+      const updateDoc = {
+        $set: {
+          booked: status,
+        }
+      }
+      const result = await roomsCollection.updateOne(query, updateDoc)
+      res.send(result);
+    })
+
+    // get all bookings for guest
+    app.get('/bookings',verifyToken, async (req, res) =>{
+      const email = req.query.email
+      if(!email){
+        return res.send([])
+      }
+      const query = {'guest.email':email}
+      const result = await bookingsCollection.find(query).toArray()
+      res.send(result);
+    })
+
+    // get all bookings for host
+    app.get('/bookings/host',verifyToken, verifyHost, async (req, res) =>{
+      const email = req.query.email
+      if(!email){
+        return res.send([])
+      }
+      const query = {host:email}
+      const result = await bookingsCollection.find(query).toArray()
+      res.send(result);
+    })
+
+    // get all user
+    app.get('/users', verifyToken, verifyAdmin, async(req, res) =>{
+      const result = await usersCollection.find().toArray()
+      res.send(result)
+    })
+
+    // Update user role
+    app.put('/users/update/:email', verifyToken, async(req, res) =>{
+      const email = req.params.email
+      const user = req.body
+      const query = {email: email}
+      const options = {upsert: true}
+      const updateDoc = {
+        $set: {
+          ...user,
+          timestamp: Date.now(),
+        }
+      }
+      const result = await usersCollection.updateOne(query, updateDoc, options)
+      res.send(result);
+    })
+
+
 
     // Send a ping to confirm a successful connection
     await client.db('admin').command({ ping: 1 })
